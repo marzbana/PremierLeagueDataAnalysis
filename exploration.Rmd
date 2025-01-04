@@ -1,0 +1,598 @@
+```{r}
+# install.packages(c(
+#  "tidyverse",
+#  "GGally",
+#  "skimr"
+# ), repos = "http://lib.stat.cmu.edu/R/CRAN/")
+
+library(tidyverse)
+library(GGally)
+library(skimr)
+```
+
+```{r}
+epl_data <- read.csv("data/epl_2014_2019.csv")
+
+
+epl_data %>%
+  select(c(FTHG, FTAG, HTHG, HTAG)) %>%
+  ggpairs(cardinality_threshold = 50, progress = FALSE)
+
+referee_counts <- table(epl_data$Referee)
+
+# Get a list of qualified referees with 20 or more games
+qualified_referees <- names(referee_counts[referee_counts >= 20])
+
+# Filter the epl_data data frame to only include games refereed by qualified referees
+filtered_epl_data <- epl_data[epl_data$Referee %in% qualified_referees, ]
+epl_data <- filtered_epl_data
+head(epl_data)
+skim(epl_data)
+```
+
+```{r}
+epl_data %>%
+  ggplot() +
+  geom_point(aes(x = HTAG, y = FTAG)) +
+  geom_smooth(aes(x = HTAG, y = FTAG), se = FALSE)
+```
+
+```{r april 1}
+ref_cards <- epl_data %>%
+  group_by(Referee) %>%
+  transmute("YellowCard" = HY + AY, "RedCard" = HR + AR) %>%
+  summarise(yellow = sum(YellowCard) / n(), red = sum(RedCard) / n()) %>%
+  pivot_longer(cols = c(yellow, red), names_to = "card", values_to = "freq")
+ref_cards
+
+# summarize(ref_cards, games_reffed = n())
+ggplot(ref_cards, aes(Referee, freq, fill = card)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  scale_fill_manual(values = c("red" = "red", "yellow" = "yellow"))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(y="Expected Cards per Match", title="Expected Cards per Match vs Referee",fill="Card")
+# seperate
+```
+```{r red and yellow}
+ref_cards <- epl_data %>%
+  group_by(Referee) %>%
+  transmute(YellowCard = HY + AY, RedCard = HR + AR) %>%
+  summarise(yellow = sum(YellowCard) / n(), red = sum(RedCard) / n()) 
+ref_cards
+
+# summarize(ref_cards, games_reffed = n())
+ggplot(ref_cards, aes(Referee, yellow)) +
+  geom_bar(stat = "identity", position = "dodge",fill="yellow") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(title="Yellow Card Ratio vs Referee",y="Yellow Card Ratio per Match")
+ggplot(ref_cards, aes(Referee, red)) +
+  geom_bar(stat = "identity", position = "dodge",fill="red") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(title="Red Card Ratio vs Referee",y="Red Card Ratio per Match")
+# seperate
+```
+```{r alex}
+#  create a new dataframe with only the relevant columns
+card_data <- epl_data %>%
+  select(HomeTeam, AwayTeam, Referee, HY, AY)
+
+# separate the data into two groups: cards given to the home team and cards given to the away team
+home_cards <- card_data %>%
+  transmute(team = HomeTeam, opp_team = AwayTeam, cards = HY, Referee) %>%
+  mutate(location = "home")
+away_cards <- card_data %>%
+  transmute(team = AwayTeam, opp_team = HomeTeam, cards = AY, Referee) %>%
+  mutate(location = "away")
+
+# combine the two groups into a single dataframe
+all_cards <- rbind(home_cards, away_cards)
+
+# create a new column for the total number of cards given to each team by each referee
+all_cards <- all_cards %>%
+  group_by(team, Referee) %>%
+  summarize(total_cards = sum(cards)) %>%
+  filter(!is.na(total_cards)) %>%
+  ungroup()
+
+# create a new column for the total number of cards given to each team by all referees
+team_totals <- all_cards %>%
+  group_by(team) %>%
+  summarize(total_cards = sum(total_cards)) %>%
+  filter(!is.na(total_cards)) %>%
+  ungroup()
+
+# calculate the percentage of cards given to the home team by each referee
+card_percentages <- all_cards %>%
+  left_join(team_totals, by = "team") %>%
+  mutate(card_percentage = total_cards.x / total_cards.y) %>%
+  select(-total_cards.x, -total_cards.y)
+
+# create a heat map for each home team
+# teams <- unique(card_data$HomeTeam)
+x <- "Man United"
+team_cards <- card_percentages %>%
+  filter(team == x)
+
+ggplot(team_cards, aes(x = Referee, y = card_percentage)) +
+  geom_tile(aes(fill = card_percentage), colour = "white") +
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(x = "Referee", y = "Ratio of Cards to Home Team", title = paste("Home Team:", x)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+# add away team and make it a bar graph, sort by y axis for premier league home
+# make a graph for each referee, put home team on x axis, don't separate home and away
+```
+```{r away vs home:yellow}
+# load data
+card_data <- epl_data %>%
+  select(HomeTeam, AwayTeam, Referee, HY, AY)
+
+# create separate dataframes for home and away cards
+home_cards <- card_data %>%
+  mutate(location = "home") %>%
+  select(HomeTeam, Referee, HY, location) %>%
+  rename(team = HomeTeam, cards = HY)
+
+away_cards <- card_data %>%
+  mutate(location = "away") %>%
+  select(AwayTeam, Referee, AY, location) %>%
+  rename(team = AwayTeam, cards = AY)
+
+# combine the dataframes
+all_cards <- rbind(home_cards, away_cards)
+
+# calculate total cards for each team and each referee
+team_totals <- all_cards %>%
+  group_by(Referee, location) %>%
+  summarize(total_cards = sum(cards) / n()) %>%
+  filter(!is.na(total_cards)) %>%
+  ungroup()
+
+# calculate percentage of cards for each team and each referee
+card_percentages <- team_totals %>%
+  group_by(Referee, location) %>%
+  summarize(card_percentage = mean(total_cards)) %>%
+  ungroup()
+
+# plot yellow card percentages for home vs. away
+ggplot(team_totals %>% group_by(Referee, location), aes(x = Referee, y = total_cards, fill = location)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("home" = "blue", "away" = "red")) +
+  labs(x = "Referee", y = "Yellow Card Per Match", fill = "", title="Yellow Card Per Match vs Referee") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  
+```
+```{r red card h vs a}
+# load data
+card_data <- epl_data %>%
+  select(HomeTeam, AwayTeam, Referee, HR, AR)
+
+# create separate dataframes for home and away cards
+home_cards <- card_data %>%
+  mutate(location = "home") %>%
+  select(HomeTeam, Referee, HR, location) %>%
+  rename(team = HomeTeam, cards = HR)
+
+away_cards <- card_data %>%
+  mutate(location = "away") %>%
+  select(AwayTeam, Referee, AR, location) %>%
+  rename(team = AwayTeam, cards = AR)
+
+# combine the dataframes
+all_cards <- rbind(home_cards, away_cards)
+
+# calculate total cards for each team and each referee
+team_totals <- all_cards %>%
+  group_by(Referee, location) %>%
+  summarize(total_cards = sum(cards) / n()) %>%
+  filter(!is.na(total_cards)) %>%
+  ungroup()
+
+# calculate percentage of cards for each team and each referee
+card_percentages <- team_totals %>%
+  group_by(Referee, location) %>%
+  summarize(card_percentage = mean(total_cards)) %>%
+  ungroup()
+
+# plot yellow card percentages for home vs. away
+ggplot(team_totals %>% group_by(Referee, location), aes(x = Referee, y = total_cards, fill = location)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("home" = "blue", "away" = "red")) +
+  labs(x = "Referee", y = "Red Card Per Match", fill = "",title="Red Card Per Match vs Referee") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+```{r yellow cards vs fouls}
+# Step 3: Preprocess the data (updated)
+epl_data_processed <- epl_data %>%
+  group_by(Referee) %>%
+  filter(!is.na(AY), !is.na(HY), !is.na(HF), !is.na(AF)) %>%
+  summarise(Yellow = AY + HY, Fouls = HF + AF, Ratio = Yellow / Fouls)
+
+# Step 4: Create the boxplot
+ggplot(epl_data_processed, aes(x = Referee, y = Ratio, group = Referee)) +
+  geom_boxplot() +
+  labs(x = "Referee", y = "Yellow Cards per Foul", fill = "", title = "Yellow Card Ratio vs Referee") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+```{r red cards vs fouls}
+# Step 3: Preprocess the data (updated)
+epl_data_processed <- epl_data %>%
+  group_by(Referee) %>%
+  filter(!is.na(AR), !is.na(HR), !is.na(HF), !is.na(AF)) %>%
+  summarise(Yellow = AR + HR, Fouls = HF + AF, Ratio = Yellow / Fouls)
+
+# Step 4: Create the boxplot
+ggplot(epl_data_processed, aes(x = Referee, y = Ratio, group = Referee)) +
+  geom_boxplot() +
+  labs(x = "Referee", y = "Red Card Percentage", fill = "", title = "Red Card Percentage vs Referee") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+```{r bar plot of fouls and yellow cards}
+data <- epl_data %>%
+  filter(!is.na(AY), !is.na(HY), !is.na(HF), !is.na(AF)) %>%
+  group_by(Referee) %>%
+  summarize(AF = sum(AF) / n(), HF = sum(HF) / n(), HY = sum(HY) / n(), AY = sum(AY) / n()) %>%
+  pivot_longer(cols = c(AF, HF), names_to = "Location", values_to = "Fouls")
+ggplot(data, aes(x = Referee, y = Fouls, fill = Location)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Referee", y = "Fouls Per Match", title = "Fouls vs Referee") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_fill_discrete(labels = c("Home Fouls", "Away Fouls"))
+```
+```{r yellow cards freq }
+# Load required libraries
+
+# Load your dataset
+# Replace 'your_data.csv' with the path to your actual data file
+
+
+# Define the big 6 Premier League teams
+big_6 <- c("Arsenal", "Chelsea", "Liverpool", "Man City", "Man United", "Tottenham")
+
+# Filter the dataset for the big 6 teams and calculate the overall median of fouls
+epl_data_big_6 <- epl_data %>%
+  filter(HomeTeam %in% big_6) %>%
+  mutate(Team = as.factor(HomeTeam), Ratio = HY / HF)
+epl_dataa <- epl_data %>% mutate(Ratio = HY / HF)
+overall_median_fouls <- median(epl_dataa$Ratio, na.rm = TRUE)
+
+# Create box plots for each of the big 6 teams and add a horizontal line for the overall median of fouls
+ggplot(epl_data_big_6, aes(x = Team, y = Ratio, fill = Team)) +
+  geom_boxplot() +
+  geom_hline(yintercept = overall_median_fouls, linetype = "dashed", color = "blue", size = 1) +
+  labs(x = "Home Team", y = "Ratio of Yellow Cards to Fouls", title = "Box Plots of Ratio of Yellow Cards to Fouls vs Home Team for the Big 6 Premier League Teams", fill = "Team") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 1))
+
+bad_6 <- c("Middlesbrough", "QPR", "Fulham", "Cardiff", "Wolves", "Huddersfield")
+epl_data_bad_6 <- epl_data %>%
+  filter(HomeTeam %in% bad_6) %>%
+  mutate(Team = as.factor(HomeTeam), Ratio = HY / HF)
+epl_dataa <- epl_data %>% mutate(Ratio = HY / HF)
+overall_median_fouls <- median(epl_dataa$Ratio, na.rm = TRUE)
+
+ggplot(epl_data_bad_6, aes(x = Team, y = Ratio, fill = Team)) +
+  geom_boxplot() +
+  geom_hline(yintercept = overall_median_fouls, linetype = "dashed", color = "blue", size = 1) +
+  labs(x = "Home Team", y = "Ratio of Yellow Cards to Fouls", title = "Box Plots of Ratio of Yellow Cards to Fouls vs Home Team for the Bad 6 Premier League Teams", fill = "Team") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 1))
+
+# epl_data %>% group_by(HomeTeam)%>%summarize(Wins=sum(FTHG>FTAG))%>%arrange(Wins)
+```
+```{r red card freq}
+# Load required libraries
+
+# Load your dataset
+# Replace 'your_data.csv' with the path to your actual data file
+
+
+# Define the big 6 Premier League teams
+big_6 <- c("Arsenal", "Chelsea", "Liverpool", "Man City", "Man United", "Tottenham")
+
+# Filter the dataset for the big 6 teams and calculate the overall median of fouls
+epl_dataa <- epl_data %>% mutate(Ratio = HR / HF)
+overall_median_fouls <- median(epl_dataa$Ratio, na.rm = TRUE)
+epl_data_big_6 <- epl_data %>%
+  filter(HomeTeam %in% big_6) %>%
+  mutate(Team = as.factor(HomeTeam), Ratio = (HR / HF))
+
+
+# Create box plots for each of the big 6 teams and add a horizontal line for the overall median of fouls
+ggplot(epl_data_big_6, aes(x = Team, y = Ratio, fill = Team)) +
+  geom_boxplot() +
+  geom_hline(yintercept = overall_median_fouls, linetype = "dashed", color = "blue", size = 1) +
+  labs(x = "Home Team", y = "Ratio of Red Cards to Fouls", title = "Box Plots of Ratio of Red Cards to Fouls vs Home Team for the Big 6 Premier League Teams", fill = "Team") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 1))
+
+bad_6 <- c("Middlesbrough", "QPR", "Fulham", "Cardiff", "Wolves", "Huddersfield")
+epl_data_bad_6 <- epl_data %>%
+  filter(HomeTeam %in% bad_6) %>%
+  mutate(Team = as.factor(HomeTeam), Ratio = (HR))
+epl_dataa <- epl_data %>% mutate(Ratio = (HR))
+overall_median_fouls <- median(epl_dataa$Ratio, na.rm = TRUE)
+
+ggplot(epl_data_bad_6, aes(x = Team, y = Ratio, fill = Team)) +
+  geom_boxplot() +
+  geom_hline(yintercept = overall_median_fouls, linetype = "dashed", color = "blue", size = 1) +
+  labs(x = "Home Team", y = "Ratio of Red Cards to Fouls", title = "Box Plots of Ratio of Red Cards to Fouls vs Home Team for the Bad 6 Premier League Teams", fill = "Team") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 1))
+
+# epl_data %>% group_by(HomeTeam)%>%summarize(Wins=sum(FTHG>FTAG))%>%arrange(Wins)
+```
+```{r red}
+data <- epl_data %>% mutate()
+ggplot(epl_data, aes(x = HomeTeam, y = HR / HF)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "Home Team", y = "Expected Red Cards per Match", title = "Red Cards and Fouls by Home Team") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 1))
+```
+
+```{r q3-graphs}
+
+
+# add yellow_per_game and red_per_game to the data frame
+epl_data <- epl_data %>%
+  group_by(HomeTeam) %>%
+  mutate(
+    fouls_per_game = HF / n(),
+    yellow_per_game = HY / n(),
+    red_per_game = HR / n()
+  ) %>%
+  ungroup()
+
+# Create a graph of the average fouls per match for each team, sorting the x axis by the average number of fouls
+ggplot(epl_data, aes(x = reorder(HomeTeam, -fouls_per_game), y = fouls_per_game)) +
+  geom_bar(stat = "identity", position = "stack",fill="blue") +
+  labs(x = "Home Team", y = "Fouls per Match", title = "Fouls by Home Team") +
+  scale_fill_manual(values = c("blue"), labels = c("Fouls")) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 1))
+
+# Create a graph of the average yellow cards per match for each team
+ggplot(epl_data, aes(x = reorder(HomeTeam, -yellow_per_game), y = yellow_per_game)) +
+  geom_bar(stat = "identity", position = "stack",fill="yellow") +
+  labs(x = "Home Team", y = "Yellow Cards per Match", title = "Yellow Cards by Home Team") +
+  scale_fill_manual(values = c("yellow"), labels = c("Yellow Cards")) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 1))
+
+# Create a graph of the average red cards per match for each team
+ggplot(epl_data, aes(x = reorder(HomeTeam, -red_per_game), y = red_per_game)) +
+  geom_bar(stat = "identity", position = "stack",fill="red") +
+  labs(x = "Home Team", y = "Red Cards per Match", title = "Red Cards by Home Team") +
+  scale_fill_manual(values = c("red"), labels = c("Red Cards")) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 1))
+```
+```{r q2-graphs: yellow cards}
+  
+# Which referees display bias towards certain teams?
+# Create a new dataframe with only the relevant columns
+card_data <- epl_data %>%
+  select(HomeTeam, AwayTeam, Referee, HY, AY)
+
+# Separate the data into two groups: cards given to the home team and cards given to the away team
+home_cards <- card_data %>% transmute(team=HomeTeam, Referee, HY) %>%
+  group_by(Referee, team) %>%
+  summarize(cards = sum(HY), totalx = n()) 
+
+away_cards <- card_data %>% transmute(team=AwayTeam, Referee, AY) %>%
+  group_by(Referee, team) %>%
+  summarize(cards = sum(AY), totaly = n()) 
+
+# Combine the two groups into a single dataframe
+all_cards <- left_join(home_cards, away_cards, by = c("Referee", "team"))
+
+# Calculate the average number of yellow cards per game for each Referee
+all_cards <- all_cards %>%
+  mutate(total_games = ifelse(is.na(totalx), 0,totalx)+ ifelse(is.na(totaly), 0, totaly), # calculate total games by referee
+        total_cards = (ifelse(is.na(cards.x),0,cards.x) + ifelse(is.na(cards.y),0,cards.y)) / total_games) %>% # calculate average cards per game by referee
+  select(-totalx, -totaly, -cards.x, -cards.y) # remove unnecessary columns
+# Get list of unique referees
+referees <- unique(card_percentages$Referee)
+
+# Create a graph for each referee
+for (x in referees) {
+  team_cards <- all_cards %>%
+    filter(Referee == x)
+
+  print(
+    ggplot(team_cards, aes(x = reorder(team, -total_cards), y = total_cards)) +
+      geom_bar(stat = "identity",fill="yellow") +
+      labs(x = "Team", y = "Average Yellow Cards per Game", title = paste("Referee:", x)) +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  )
+}
+```
+
+
+
+```{r q2-graphs: red cards}
+  
+# Which referees display bias towards certain teams?
+# Create a new dataframe with only the relevant columns
+card_data <- epl_data %>%
+  select(HomeTeam, AwayTeam, Referee, HR, AR)
+
+# Separate the data into two groups: cards given to the home team and cards given to the away team
+home_cards <- card_data %>% transmute(team=HomeTeam, Referee, HR) %>%
+  group_by(Referee, team) %>%
+  summarize(cards = sum(HR), totalx = n()) 
+
+away_cards <- card_data %>% transmute(team=AwayTeam, Referee, AR) %>%
+  group_by(Referee, team) %>%
+  summarize(cards = sum(AR), totaly = n()) 
+
+# Combine the two groups into a single dataframe
+all_cards <- left_join(home_cards, away_cards, by = c("Referee", "team"))
+
+# Calculate the average number of yellow cards per game for each Referee
+all_cards <- all_cards %>%
+  mutate(total_games = ifelse(is.na(totalx), 0,totalx)+ ifelse(is.na(totaly), 0, totaly), # calculate total games by referee
+        total_cards = (ifelse(is.na(cards.x),0,cards.x) + ifelse(is.na(cards.y),0,cards.y)) / total_games) %>% # calculate average cards per game by referee
+  select(-totalx, -totaly, -cards.x, -cards.y) # remove unnecessary columns
+# Get list of unique referees
+referees <- unique(card_percentages$Referee)
+
+# Create a graph for each referee
+for (x in referees) {
+  team_cards <- all_cards %>%
+    filter(Referee == x)
+
+  print(
+    ggplot(team_cards, aes(x = reorder(team, -total_cards), y = total_cards)) +
+      geom_bar(stat = "identity",fill="red") +
+      labs(x = "Team", y = "Average Red Cards per Game", title = paste("Referee:", x)) +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  )
+}
+```
+```{r q2-graphs: fouls }
+  
+# Which referees display bias towards certain teams?
+# Create a new dataframe with only the relevant columns
+card_data <- epl_data %>%
+  select(HomeTeam, AwayTeam, Referee, HF, AF)
+
+# Separate the data into two groups: cards given to the home team and cards given to the away team
+home_cards <- card_data %>% transmute(team=HomeTeam, Referee, HF) %>%
+  group_by(Referee, team) %>%
+  summarize(cards = sum(HF), totalx = n()) 
+
+away_cards <- card_data %>% transmute(team=AwayTeam, Referee, AF) %>%
+  group_by(Referee, team) %>%
+  summarize(cards = sum(AF), totaly = n()) 
+
+# Combine the two groups into a single dataframe
+all_cards <- left_join(home_cards, away_cards, by = c("Referee", "team"))
+
+# Calculate the average number of yellow cards per game for each Referee
+all_cards <- all_cards %>%
+  mutate(total_games = ifelse(is.na(totalx), 0,totalx)+ ifelse(is.na(totaly), 0, totaly), # calculate total games by referee
+        total_cards = (ifelse(is.na(cards.x),0,cards.x) + ifelse(is.na(cards.y),0,cards.y)) / total_games) %>% # calculate average cards per game by referee
+  select(-totalx, -totaly, -cards.x, -cards.y) # remove unnecessary columns
+# Get list of unique referees
+referees <- unique(card_percentages$Referee)
+
+# Create a graph for each referee
+for (x in referees) {
+  team_cards <- all_cards %>%
+    filter(Referee == x)
+
+  print(
+    ggplot(team_cards, aes(x = reorder(team, -total_cards), y = total_cards)) +
+      geom_bar(stat = "identity",fill="blue") +
+      labs(x = "Team", y = "Average Fouls per Game", title = paste("Referee:", x)) +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  )
+}
+```
+
+```{r q1-stats}
+# Count the number of fouls, yellow cards, and red cards booked against the Big 6 and Bad 6 teams
+big_6 <- c("Arsenal", "Chelsea", "Liverpool", "Man City", "Man United", "Tottenham")
+bad_6 <- c("Middlesbrough", "QPR", "Fulham", "Cardiff", "Wolves", "Huddersfield")
+
+# Create a new dataframe with only the relevant columns
+card_data <- epl_data %>%
+  select(HomeTeam, AwayTeam, HF, AF, HY, AY, HR, AR)
+
+# Separate the data into two groups: cards given to the home team and cards given to the away team
+home_cards <- card_data %>% transmute(team=HomeTeam, HF, HY, HR) %>%
+  group_by(team) %>%
+  summarize(home_fouls = sum(HF), home_yellow_cards = sum(HY), home_red_cards = sum(HR))
+
+away_cards <- card_data %>% transmute(team=AwayTeam, AF, AY, AR) %>%
+  group_by(team) %>%
+  summarize(away_fouls = sum(AF), away_yellow_cards = sum(AY), away_red_cards = sum(AR))
+
+# Combine the two groups into a single dataframe
+all_cards <- left_join(home_cards, away_cards, by = "team")
+
+# Calculate the total number of fouls, yellow cards, and red cards per game for each team
+all_cards <- all_cards %>%
+  mutate(total_fouls = home_fouls + away_fouls,
+         total_yellow_cards = home_yellow_cards + away_yellow_cards,
+         total_red_cards = home_red_cards + away_red_cards) %>%
+  select(-home_fouls, -away_fouls, -home_yellow_cards, -away_yellow_cards, -home_red_cards, -away_red_cards)
+
+# Calculate the number of games played by each team
+home_games_played <- epl_data %>%
+  group_by(HomeTeam) %>%
+  summarize(h_games_played = n()) %>%
+  rename(team = HomeTeam)
+
+away_games_played <- epl_data %>%
+  group_by(AwayTeam) %>%
+  summarize(a_games_played = n()) %>%
+  rename(team = AwayTeam)
+  
+# Combine the two groups into a single dataframe
+games_played <- left_join(home_games_played, away_games_played, by = "team")
+
+# Calculate the total number of games played by each team
+games_played <- games_played %>%
+  mutate(total_games_played = h_games_played + a_games_played) %>%
+  select(-h_games_played, -a_games_played)
+
+# Calculate the average number of fouls, yellow cards, and red cards per game for each team
+all_cards <- left_join(all_cards, games_played, by = "team") %>%
+  mutate(avg_fouls = total_fouls / total_games_played,
+         avg_yellow_cards = total_yellow_cards / total_games_played,
+         avg_red_cards = total_red_cards / total_games_played) %>%
+  select(-total_fouls, -total_yellow_cards, -total_red_cards, -total_games_played)
+
+# Separate the data into two groups: cards given to the Big 6 and cards given to the Bad 6
+big_6_cards <- all_cards %>%
+  filter(team %in% big_6)
+
+bad_6_cards <- all_cards %>%
+  filter(team %in% bad_6)
+
+CI <- function(data, alpha) {
+  x_bar <- mean(data)
+  s <- sd(data)
+  n <- length(data)
+  q <- qnorm(1 - alpha / 2)
+  lower <- x_bar - q * s / sqrt(n)
+  upper <- x_bar + q * s / sqrt(n)
+  return(c(lower, upper))
+}
+
+# Determine if there is a significant difference between the number of fouls, yellow cards, and red cards booked against the Big 6 and Bad 6 teams
+big_6_fouls <- mean(big_6_cards$avg_fouls)
+bad_6_fouls <- mean(bad_6_cards$avg_fouls)
+big_6_yellow_cards <- mean(big_6_cards$avg_yellow_cards)
+bad_6_yellow_cards <- mean(bad_6_cards$avg_yellow_cards)
+big_6_red_cards <- mean(big_6_cards$avg_red_cards)
+bad_6_red_cards <- mean(bad_6_cards$avg_red_cards)
+
+# Calculate the z-score for the difference in the average number of fouls, yellow cards, and red cards per game for the Big 6 and Bad 6
+z_fouls <- (big_6_fouls - bad_6_fouls) / sqrt(var(big_6_cards$avg_fouls) / length(big_6_cards$avg_fouls) + var(bad_6_cards$avg_fouls) / length(bad_6_cards$avg_fouls))
+z_yellow_cards <- (big_6_yellow_cards - bad_6_yellow_cards) / sqrt(var(big_6_cards$avg_yellow_cards) / length(big_6_cards$avg_yellow_cards) + var(bad_6_cards$avg_yellow_cards) / length(bad_6_cards$avg_yellow_cards))
+z_red_cards <- (big_6_red_cards - bad_6_red_cards) / sqrt(var(big_6_cards$avg_red_cards) / length(big_6_cards$avg_red_cards) + var(bad_6_cards$avg_red_cards) / length(bad_6_cards$avg_red_cards))
+
+# Calculate the p-value for the difference in the average number of fouls, yellow cards, and red cards per game for the Big 6 and Bad 6
+p_fouls <- 2 * pnorm(-abs(z_fouls))
+p_yellow_cards <- 2 * pnorm(-abs(z_yellow_cards))
+p_red_cards <- 2 * pnorm(-abs(z_red_cards))
+
+# Calculate the 95% confidence interval for the difference in the average number of fouls, yellow cards, and red cards per game for the Big 6 and Bad 6
+big_6_bad_6_fouls_CI <- CI(big_6_cards$avg_fouls - bad_6_cards$avg_fouls, 0.05)
+big_6_bad_6_yellow_cards_CI <- CI(big_6_cards$avg_yellow_cards - bad_6_cards$avg_yellow_cards, 0.05)
+big_6_bad_6_red_cards_CI <- CI(big_6_cards$avg_red_cards - bad_6_cards$avg_red_cards, 0.05)
+
+```
+```{r yellow vs red cards}
+ggplot(epl_data%>% mutate(yellow=HY+AY, red=HR+AR,fouls=HF+AF), aes(x=fouls, y=yellow)) + geom_point() + geom_smooth()
+
+
+```
+
